@@ -3,7 +3,7 @@ import json
 import os
 import random
 
-TOKEN = os.getenv("TELEGRAM_TOKEN")  # Или вставь свой токен напрямую, если тестируешь локально
+TOKEN = os.getenv("8162107934:AAFI7VCgfRZjBCwAOsZK_2SE-TvqQDwgkFY")  # Или вставь свой токен напрямую, если тестируешь локально
 bot = telebot.TeleBot(TOKEN)
 
 DATA_DIR = "data"
