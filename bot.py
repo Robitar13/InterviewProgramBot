@@ -4,7 +4,7 @@ import os
 import random
 
 TOKEN = os.getenv("TELEGRAM_TOKEN")  # Или вставь свой токен напрямую, если тестируешь локально
-bot = telebot.TeleBot(8162107934:AAFI7VCgfRZjBCwAOsZK_2SE-TvqQDwgkFY)
+bot = telebot.TeleBot()
 
 DATA_DIR = "data"
 SESSIONS_FILE = "user_sessions.json"
