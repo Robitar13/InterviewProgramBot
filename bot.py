@@ -1,87 +1,138 @@
-import telebot
+import os
 import json
 import random
-import os
-from dotenv import load_dotenv
+import telebot
 
-load_dotenv()
-TOKEN = os.getenv("BOT_TOKEN")
+# Загружаем токен из переменной окружения (из GitHub Secrets)
+TOKEN = os.getenv("TELEGRAM_TOKEN")
+
+if not TOKEN:
+    raise Exception("❌ TELEGRAM_TOKEN не найден. Убедитесь, что он добавлен в GitHub Secrets!")
+
 bot = telebot.TeleBot(TOKEN)
 
-# Загрузка вопросов
-def load_questions(direction):
-    with open(f'questions/{direction}.json', 'r', encoding='utf-8') as f:
-        return json.load(f)
+# Константы
+DATA_DIR = "data"
+SESSIONS_FILE = "user_sessions.json"
+QUESTIONS_PER_TEST = 25
 
-# Загрузка сессий пользователей
-def load_sessions():
-    if os.path.exists('user_sessions.json'):
-        with open('user_sessions.json', 'r', encoding='utf-8') as f:
-            return json.load(f)
-    return {}
+# Загружаем сессии пользователей
+if os.path.exists(SESSIONS_FILE):
+    with open(SESSIONS_FILE, "r", encoding="utf-8") as f:
+        user_sessions = json.load(f)
+else:
+    user_sessions = {}
 
-# Сохранение сессий пользователей
-def save_sessions(sessions):
-    with open('user_sessions.json', 'w', encoding='utf-8') as f:
-        json.dump(sessions, f, ensure_ascii=False, indent=4)
-
-# Обработка команды /start
-@bot.message_handler(commands=['start'])
+# Команда /start — выбор направления
+@bot.message_handler(commands=["start"])
 def start(message):
-    markup = telebot.types.ReplyKeyboardMarkup(one_time_keyboard=True)
-    directions = ['frontend', 'backend', 'fullstack', 'mobile', 'gamedev', 'devops']
-    for dir in directions:
-        markup.add(dir)
-    msg = bot.send_message(message.chat.id, "Выберите направление:", reply_markup=markup)
-    bot.register_next_step_handler(msg, process_direction)
+    chat_id = str(message.chat.id)
+    user_sessions[chat_id] = {
+        "role": None,
+        "questions": [],
+        "used_questions": [],
+        "step": 0,
+        "score": 0
+    }
+
+    markup = telebot.types.ReplyKeyboardMarkup(resize_keyboard=True, one_time_keyboard=True)
+    for file in os.listdir(DATA_DIR):
+        if file.endswith(".json"):
+            name = file.replace(".json", "").capitalize()
+            markup.add(name)
+
+    bot.send_message(chat_id, "👋 Привет! Выбери направление для собеседования:", reply_markup=markup)
 
 # Обработка выбора направления
-def process_direction(message):
-    direction = message.text.lower()
-    questions = load_questions(direction)
-    selected_questions = random.sample(questions, 25)
-    sessions = load_sessions()
-    sessions[str(message.chat.id)] = {
-        'direction': direction,
-        'questions': selected_questions,
-        'current': 0,
-        'score': 0
-    }
-    save_sessions(sessions)
-    send_question(message.chat.id)
+@bot.message_handler(func=lambda msg: msg.text.lower() in [f.replace(".json", "") for f in os.listdir(DATA_DIR)])
+def handle_role_selection(message):
+    chat_id = str(message.chat.id)
+    role = message.text.lower()
+    filepath = os.path.join(DATA_DIR, f"{role}.json")
 
-# Отправка вопроса
-def send_question(chat_id):
-    sessions = load_sessions()
-    session = sessions[str(chat_id)]
-    current = session['current']
-    question = session['questions'][current]
-    markup = telebot.types.ReplyKeyboardMarkup(one_time_keyboard=True)
-    options = question['options']
-    random.shuffle(options)
-    for option in options:
-        markup.add(option)
-    msg = bot.send_message(chat_id, f"Вопрос {current + 1}: {question['question']}", reply_markup=markup)
-    bot.register_next_step_handler(msg, process_answer)
+    with open(filepath, "r", encoding="utf-8") as f:
+        all_questions = json.load(f)
 
-# Обработка ответа
-def process_answer(message):
-    sessions = load_sessions()
-    session = sessions[str(message.chat.id)]
-    current = session['current']
-    question = session['questions'][current]
-    if message.text == question['answer']:
-        session['score'] += 1
-        bot.send_message(message.chat.id, "✅ Правильно!")
+    used = user_sessions[chat_id]["used_questions"]
+    available = [q for q in all_questions if q["question"] not in used]
+
+    if len(available) < QUESTIONS_PER_TEST:
+        available = all_questions
+        user_sessions[chat_id]["used_questions"] = []
+
+    selected = random.sample(available, QUESTIONS_PER_TEST)
+
+    user_sessions[chat_id].update({
+        "role": role,
+        "questions": selected,
+        "step": 0,
+        "score": 0
+    })
+
+    ask_question(chat_id)
+
+# Задаёт вопрос
+def ask_question(chat_id):
+    session = user_sessions[chat_id]
+    step = session["step"]
+
+    if step >= len(session["questions"]):
+        return finish_test(chat_id)
+
+    q = session["questions"][step]
+    options_text = "\n".join([f"{chr(65+i)}) {opt}" for i, opt in enumerate(q["options"])])
+    question_text = f"❓ Вопрос {step+1}/{QUESTIONS_PER_TEST}:\n<b>{q['question']}</b>\n\n{options_text}"
+
+    markup = telebot.types.ReplyKeyboardMarkup(resize_keyboard=True, one_time_keyboard=True)
+    for i in range(len(q["options"])):
+        markup.add(chr(65+i))
+
+    bot.send_message(chat_id, question_text, parse_mode="HTML", reply_markup=markup)
+
+# Обработка ответа пользователя
+@bot.message_handler(func=lambda msg: msg.text.upper() in ["A", "B", "C", "D", "E"])
+def handle_answer(message):
+    chat_id = str(message.chat.id)
+    session = user_sessions.get(chat_id)
+
+    if not session:
+        return bot.send_message(chat_id, "Пожалуйста, начни с команды /start")
+
+    step = session["step"]
+    q = session["questions"][step]
+    correct_index = q["answer"]
+    correct_letter = chr(65 + correct_index)
+
+    if message.text.upper() == correct_letter:
+        bot.send_message(chat_id, "✅ Верно!")
+        session["score"] += 1
     else:
-        bot.send_message(message.chat.id, f"❌ Неправильно. Правильный ответ: {question['answer']}")
-    session['current'] += 1
-    if session['current'] < 25:
-        save_sessions(sessions)
-        send_question(message.chat.id)
-    else:
-        bot.send_message(message.chat.id, f"Тест завершен! Ваш результат: {session['score']} из 25.")
-        sessions.pop(str(message.chat.id))
-        save_sessions(sessions)
+        correct_answer_text = q["options"][correct_index]
+        bot.send_message(chat_id, f"❌ Неверно. Правильный ответ: {correct_letter}) {correct_answer_text}")
 
+    session["used_questions"].append(q["question"])
+    session["step"] += 1
+    ask_question(chat_id)
+
+# Завершение собеседования
+def finish_test(chat_id):
+    session = user_sessions[chat_id]
+    total = len(session["questions"])
+    score = session["score"]
+    percent = round((score / total) * 100)
+
+    if percent >= 80:
+        feedback = "🎉 Отлично! Ты бы точно прошёл собеседование!"
+    elif percent >= 50:
+        feedback = "🧐 Неплохо, но стоит немного подтянуть знания."
+    else:
+        feedback = "😕 Пока не прошёл бы. Но ты можешь попробовать ещё раз!"
+
+    bot.send_message(chat_id, f"📊 Результат: {score} из {total} ({percent}%)\n{feedback}")
+    bot.send_message(chat_id, "Хочешь пройти ещё раз? Напиши /start")
+
+    with open(SESSIONS_FILE, "w", encoding="utf-8") as f:
+        json.dump(user_sessions, f, ensure_ascii=False, indent=2)
+
+# Запуск бота
 bot.polling()
