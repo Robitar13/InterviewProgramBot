@@ -3,7 +3,7 @@ import json
 import random
 import telebot
 
-# Загружаем токен из переменной окружения (из GitHub Secrets)
+# Загружаем токен из переменной окружения
 TOKEN = os.getenv("TELEGRAM_TOKEN")
 
 if not TOKEN:
