@@ -3,6 +3,10 @@ import json
 import random
 import telebot
 
+
+
+
+
 # Загружаем токен из переменной окружения
 TOKEN = os.getenv("TELEGRAM_TOKEN")
 
