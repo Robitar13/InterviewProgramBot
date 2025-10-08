@@ -1,6 +1,6 @@
 #import os
 #import json
-#import random
+import random
 import telebot
 
 # Загружаем токен из переменной окружения
